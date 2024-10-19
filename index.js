@@ -8,7 +8,7 @@ import fs from "fs";
 const PORT = process.env.PORT || 3000;
 const PASS = process.env.PASS || "password"; // only applies for git actions, to prevent spam cloning or pulling
 const REPO = process.env.REPO_URL || "https://github.com/partofmyid/register";
-const DIR = path.join(process.cwd(), process.env.DIR || "repo");
+const DIR = process.env.DIR || "repo";
 
 console.log(`\
 Start settings (process.env to modify):
@@ -26,7 +26,7 @@ app.post("/git/clone", (req, res) => {
         return;
     }
 
-    const git = spawn("/usr/bin/env", ["git", "clone", "--depth", "1", "--branch", "main", REPO, DIR]);
+    const git = spawn("git", ["clone", "--depth", "1", "--branch", "main", REPO, DIR]);
     let stderr = "", stdout = "";
     git.stdout.on("data", (data) => stdout += data);
     git.stderr.on("data", (data) => stderr += data);
@@ -43,7 +43,7 @@ app.post("/git/pull", (req, res) => {
         return;
     }
 
-    const git = spawn("/usr/bin/env", ["git", "pull"], { cwd: DIR });
+    const git = spawn("git", ["pull"], { cwd: DIR });
     let stderr = "", stdout = "";
     git.stdout.on("data", (data) => stdout += data);
     git.stderr.on("data", (data) => stderr += data);
@@ -54,7 +54,7 @@ app.post("/git/pull", (req, res) => {
     });
 });
 
-app.get("/git/rm" , (req, res) => {
+app.post("/git/rm" , (req, res) => {
     if (req.query.pass !== PASS) {
         res.status(401).send("Unauthorized");
         return;
@@ -66,6 +66,20 @@ app.get("/git/rm" , (req, res) => {
     });
 });
 
+app.post("/db/sync", (req, res) => {
+    if (req.query.pass !== PASS) {
+        res.status(401).send("Unauthorized");
+        return;
+    }
+
+    const domainsDir = path.join(DIR, "domains");
+    const dbPath = path.join(process.cwd(), "db.json");
+    const db = require(dbPath);
+
+    fs.readdirSync(domainsDir).forEach((file) => {
+
+    });
+});
 
 app.listen(PORT, () => {
     if (PASS === "password") console.log("Please change the default password");
