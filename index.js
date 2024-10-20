@@ -1,10 +1,10 @@
 // @ts-check
 
-import pocketbase from "pocketbase";
+import pocketbase from "pocketbase"; // only for querying information
 import cp from "child_process";
 import express from "express";
 import path from "path";
-import fs from "fs";
+import fs from "fs"; // everything else use this
 
 const settings = JSON.parse(fs.readFileSync("./settings.json", "utf8"));
 const app = express();
@@ -65,7 +65,7 @@ app.post("/db/sync", async (req, res) => {
     const domainsDir = path.join(settings.dir, "domains");
     const pushed = [], fails = [];
 
-    fs.readdirSync(domainsDir).forEach(async (file) => {
+    for (const file of fs.readdirSync(domainsDir)) {
         const conf = JSON.parse(fs.readFileSync(path.join(domainsDir, file), "utf8"));
         if (!conf?.record || !conf?.owner?.username) return;
 
@@ -95,12 +95,12 @@ app.post("/db/sync", async (req, res) => {
         if (existingId) promise = pb.collection('subdomains').update(existingId, record);
         else promise = pb.collection('subdomains').create(record);
 
-        promise.then(() => pushed.push(record.subdomain), (err) => {
+        await promise.then(() => pushed.push(record.subdomain), (err) => {
             fails.push(record.subdomain);
             console.error(`Failed to sync ${record.subdomain}:`);
             console.error(err);
         });
-    });
+    }
 
     res.json({ pushed, fails });
 });
@@ -116,7 +116,7 @@ app.post("/db/gc", async (req, res) => {
         id: i.id,
         subdomain: i.subdomain,
     }));
-    
+
     for (const sub of remote) {
         if (!local.includes(sub.subdomain)) {
             await pb.collection('subdomains').delete(sub.id).then(() => {
@@ -130,6 +130,29 @@ app.post("/db/gc", async (req, res) => {
     }
 
     res.json({ deleted, fails });
+});
+
+app.get("/query/count", async (req, res) => {
+    const domainsDir = path.join(settings.dir, "domains");
+    const count = fs.readdirSync(domainsDir).length;
+    res.json({ count });
+});
+
+app.get("/query/check/:subdomain", async (req, res) => {
+    const subdomain = req.params.subdomain;
+    const conf = path.join(settings.dir, "domains", `${subdomain}.json`);
+    res.json({ available: !fs.existsSync(conf) });
+});
+
+app.get("/query/records/:subdomain", async (req, res) => {
+    const subdomain = req.params.subdomain;
+    const conf = path.join(settings.dir, "domains", `${subdomain}.json`);
+    if (!fs.existsSync(conf)) {
+        res.status(404).json({error: "ENOENT"});
+        return;
+    }
+
+    res.json(JSON.parse(fs.readFileSync(conf, "utf8")).record);
 });
 
 app.listen(settings.port, async () => {
