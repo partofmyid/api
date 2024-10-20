@@ -1,5 +1,5 @@
 {
-    "pb": "https://part-of-my-id.pockethost.io",
+    "pb": "http://10.0.0.70:8080",
     "port": 3000,
     "pass": "password",
     "repo": "https://github.com/partofmyid/register",
