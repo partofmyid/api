@@ -1,32 +1,32 @@
 // @ts-check
 
-import { spawn } from "child_process";
+import pocketbase from "pocketbase";
+import cp from "child_process";
 import express from "express";
 import path from "path";
 import fs from "fs";
 
-const PORT = process.env.PORT || 3000;
-const PASS = process.env.PASS || "password"; // only applies for git actions, to prevent spam cloning or pulling
-const REPO = process.env.REPO_URL || "https://github.com/partofmyid/register";
-const DIR = process.env.DIR || "repo";
-
-console.log(`\
-Start settings (process.env to modify):
-PORT: ${PORT}
-PASS: ${PASS}
-REPO: ${REPO}
-DIR: ${DIR}
-`);
-
+const settings = JSON.parse(fs.readFileSync("./settings.json", "utf8"));
 const app = express();
+const pb = new pocketbase(settings.pb);
 
-app.post("/git/clone", (req, res) => {
-    if (req.query.pass !== PASS) {
-        res.status(401).send("Unauthorized");
-        return;
+pb.autoCancellation(false);
+app.set("trust proxy", true);
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    if (req.path.startsWith("/git") || req.path.startsWith("/db")) {
+        if (req.query.pass !== settings.pass) {
+            res.status(401).send("Unauthorized");
+            return;
+        }
     }
 
-    const git = spawn("git", ["clone", "--depth", "1", "--branch", "main", REPO, DIR]);
+    console.log(`[${new Date().toLocaleString()}] ${req.ip} ${req.method} ${req.path}`);
+    next();    
+});
+
+app.post("/git/clone", (req, res) => {
+    const git = cp.spawn("/usr/bin/env", ["git", "clone", "--depth", "1", "--branch", "main", settings.repo, settings.dir]);
     let stderr = "", stdout = "";
     git.stdout.on("data", (data) => stdout += data);
     git.stderr.on("data", (data) => stderr += data);
@@ -38,12 +38,12 @@ app.post("/git/clone", (req, res) => {
 });
 
 app.post("/git/pull", (req, res) => {
-    if (req.query.pass !== PASS) {
-        res.status(401).send("Unauthorized");
+    if (!fs.existsSync(settings.dir)) {
+        res.status(404).send("Directory not found");
         return;
     }
 
-    const git = spawn("git", ["pull"], { cwd: DIR });
+    const git = cp.spawn("/usr/bin/env", ["git", "pull"], { cwd: settings.dir });
     let stderr = "", stdout = "";
     git.stdout.on("data", (data) => stdout += data);
     git.stderr.on("data", (data) => stderr += data);
@@ -55,33 +55,83 @@ app.post("/git/pull", (req, res) => {
 });
 
 app.post("/git/rm" , (req, res) => {
-    if (req.query.pass !== PASS) {
-        res.status(401).send("Unauthorized");
-        return;
-    }
-
-    fs.rmdir(DIR, { recursive: true }, (err) => {
+    fs.rmdir(settings.dir, { recursive: true }, (err) => {
         if (err) res.status
         else res.send("Deleted");
     });
 });
 
-app.post("/db/sync", (req, res) => {
-    if (req.query.pass !== PASS) {
-        res.status(401).send("Unauthorized");
-        return;
-    }
+app.post("/db/sync", async (req, res) => {
+    const domainsDir = path.join(settings.dir, "domains");
+    const pushed = [], fails = [];
 
-    const domainsDir = path.join(DIR, "domains");
-    const dbPath = path.join(process.cwd(), "db.json");
-    const db = require(dbPath);
+    fs.readdirSync(domainsDir).forEach(async (file) => {
+        const conf = JSON.parse(fs.readFileSync(path.join(domainsDir, file), "utf8"));
+        if (!conf?.record || !conf?.owner?.username) return;
 
-    fs.readdirSync(domainsDir).forEach((file) => {
+        const record = {
+            subdomain: file.split(".").slice(0, -1).join("."),
+            username: conf.owner.username,
+            records: conf.record,
+            proxied: conf?.proxied || false,
+        }
 
+        let existingId = '';
+        await pb.collection('subdomains').getList(1, 1, {
+            filter: `subdomain = '${record.subdomain}'`,
+            fields: 'id,subdomain'
+        }).then((res) => {
+            for (const i of res.items) {
+                if (i.subdomain !== record.subdomain) continue;
+                existingId = i.id;
+                break;
+            }
+        }, (ej) => {
+            // record not found, proceed           
+        });
+
+        let promise = null;
+
+        if (existingId) promise = pb.collection('subdomains').update(existingId, record);
+        else promise = pb.collection('subdomains').create(record);
+
+        promise.then(() => pushed.push(record.subdomain), (err) => {
+            fails.push(record.subdomain);
+            console.error(`Failed to sync ${record.subdomain}:`);
+            console.error(err);
+        });
     });
+
+    res.json({ pushed, fails });
 });
 
-app.listen(PORT, () => {
-    if (PASS === "password") console.log("Please change the default password");
-    console.log(`Server is running on port ${PORT}`)
+app.post("/db/gc", async (req, res) => {
+    const domainsDir = path.join(settings.dir, "domains");
+    const deleted = [], fails = [];
+
+    const local = fs.readdirSync(domainsDir).map((i) => i.split(".").slice(0, -1).join("."));
+    const remote = (await pb.collection('subdomains').getList(1, 9999, {
+        fields: 'id,subdomain',
+    })).items.map((i) => ({
+        id: i.id,
+        subdomain: i.subdomain,
+    }));
+    
+    for (const sub of remote) {
+        if (!local.includes(sub.subdomain)) {
+            await pb.collection('subdomains').delete(sub.id).then(() => {
+                deleted.push(sub.subdomain);
+            }, (err) => {
+                fails.push(sub.subdomain);
+                console.error(`Failed to delete ${sub.subdomain}:`);
+                console.error(err);
+            });
+        }
+    }
+
+    res.json({ deleted, fails });
+});
+
+app.listen(settings.port, async () => {
+    console.log(`Server is running on port ${settings.port}`)
 });

@@ -2,3 +2,4 @@ node_modules
 repo
 db.json
 *cache*
+creds.json

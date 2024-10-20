@@ -1,0 +1,7 @@
+{
+    "pb": "https://part-of-my-id.pockethost.io",
+    "port": 3000,
+    "pass": "password",
+    "repo": "https://github.com/partofmyid/register",
+    "dir": "/root/Projects/api/repo"
+}
