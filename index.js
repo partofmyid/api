@@ -43,6 +43,11 @@ app.post("/git/pull", (req, res) => {
         return;
     }
 
+    if (!fs.existsSync(DIR)) {
+        res.status(500).send("Directory not found");
+        return;
+    }
+
     const git = spawn("git", ["pull"], { cwd: DIR });
     let stderr = "", stdout = "";
     git.stdout.on("data", (data) => stdout += data);
@@ -74,11 +79,20 @@ app.post("/db/sync", (req, res) => {
 
     const domainsDir = path.join(DIR, "domains");
     const dbPath = path.join(process.cwd(), "db.json");
-    const db = require(dbPath);
+    const db = []
 
-    fs.readdirSync(domainsDir).forEach((file) => {
+    try {
+        fs.readdirSync(domainsDir).forEach((file) => db.push({
+            subdomain: file.split(".").slice(0, -1).join("."), 
+            properties: JSON.parse(fs.readFileSync(path.join(domainsDir, file), "utf8")) 
+        }));
 
-    });
+        fs.writeFileSync(dbPath, JSON.stringify(db));
+        res.send("Database sync success");
+    } catch (err) {
+        res.status(500).send(err.message);
+        return;
+    }
 });
 
 app.listen(PORT, () => {
