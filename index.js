@@ -22,6 +22,8 @@ const app = express();
 app.set("trust proxy", true);
 app.use(express.json());
 app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
     if ((req.originalUrl.startsWith("/git") || req.originalUrl.startsWith("/db")) && req.query.pass !== PASS) {
         res.status(401).send("Unauthorized");
         return;
